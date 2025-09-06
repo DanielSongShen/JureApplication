@@ -1,0 +1,28 @@
+[tool.poetry]
+name = "jureapplication"
+version = "0.1.0"
+description = ""
+authors = ["DanielSongShen <danielsongshengit@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+packages = [
+    { include = "tool_extractor", from = "src" },
+    { include = "task_extractor", from = "src" },
+]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+langchain = "^0.3.27"
+langchain-openai = "^0.2.14"
+openai = "^1.106.1"
+pydantic = "^2.11.7"
+python-dotenv = "^1.0.1"
+pandas = "^2.3.2"
+nbformat = "^5.10.4"
+nbclient = "^0.10.2"
+streamlit = "^1.49.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
