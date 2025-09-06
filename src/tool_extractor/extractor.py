@@ -10,6 +10,11 @@ from .models import ToolRecord
 
 
 def _read_and_parse(path: Path) -> Tuple[Optional[str], Optional[ast.Module]]:
+    """Read a file and return (source_text, parsed_ast_module).
+
+    Returns (None, None) on I/O, decoding, or syntax errors so callers can
+    count the file as skipped without raising.
+    """
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -50,6 +55,7 @@ def _extract_literal_all(module: ast.Module) -> Set[str]:
 
 
 def _extract_top_level_functions(module: ast.Module) -> List[ast.AST]:
+    """Return top-level function and async function definitions from a module."""
     return [
         n
         for n in module.body
@@ -58,10 +64,18 @@ def _extract_top_level_functions(module: ast.Module) -> List[ast.AST]:
 
 
 def _is_public(name: str, literal_all: Set[str]) -> bool:
+    """Heuristic publicness: not leading underscore unless present in __all__."""
     return (not name.startswith("_")) or (name in literal_all)
 
 
 def _get_annotation_text(source: str, annotation: Optional[ast.AST]) -> Optional[str]:
+    """Render an annotation AST back to text.
+
+    Preference order:
+    1) Exact source segment (preserves formatting and forward references)
+    2) ast.unparse fallback when available
+    Returns None if no annotation exists or unparsing fails.
+    """
     if annotation is None:
         return None
     # Prefer exact source segment
@@ -89,6 +103,13 @@ def _format_param(name: str, ann: Optional[str], default: bool) -> str:
 
 
 def _render_signature(fn: ast.AST, source: str) -> str:
+    """Reconstruct a Python signature string from a FunctionDef/AsyncFunctionDef.
+
+    Handles all parameter kinds (positional-only, positional-or-keyword, var-positional,
+    keyword-only, var-keyword) and aligns defaults according to the AST's defaults
+    layout. Inserts '/' for positional-only and '*' when needed for keyword-only
+    parameters. Preserves annotation text using source segments when possible.
+    """
     assert isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
     args = fn.args
 
@@ -157,6 +178,11 @@ def _normalize_module_name(mod: str) -> str:
 
 
 def _module_name_for(file_path: Path, repo_root: Path) -> str:
+    """Compute the dotted module name for a file under the repository root.
+
+    - Produces src-layout aware names (e.g., strips trailing '.__init__').
+    - Normalizes with _normalize_module_name for consistency across layouts.
+    """
     rel = file_path.relative_to(repo_root).as_posix()
     mod = rel[:-3].replace("/", ".")  # strip .py
     if mod.endswith(".__init__"):
@@ -165,6 +191,18 @@ def _module_name_for(file_path: Path, repo_root: Path) -> str:
 
 
 def _resolve_relative_module(current_module: str, module: Optional[str], level: int) -> str:
+    """Resolve a relative import target to an absolute dotted path.
+
+    Parameters
+    - current_module: The dotted path of the module performing the import
+      (e.g., 'pkg.subpkg.__init__' caller context already normalized upstream).
+    - module: The 'from X import ...' target (can be None for 'from . import ...').
+    - level: The number of leading dots indicating relative depth.
+
+    The algorithm climbs 'level-1' parents from current_module, then appends the
+    explicit 'module' if provided. For 'from . import subpkg as alias', module is
+    None and we return the package prefix for alias handling at the call site.
+    """
     # Resolve relative import target to absolute dotted path
     if level <= 0:
         return module or current_module
@@ -180,6 +218,19 @@ def _resolve_relative_module(current_module: str, module: Optional[str], level: 
 
 
 def extract_tools(repo_path: str) -> Tuple[List[Dict[str, Any]], int, int]:
+    """Extract public top-level functions and their public API exposure.
+
+    Two-pass strategy over the repository:
+    1) Parse files to collect function definitions and package-level export hints:
+       - Top-level functions that are public (not prefixed '_' unless in __all__)
+       - Package re-exports (from X import Y as Z) and subpackage aliases
+       - __all__ declarations per package
+    2) Synthesize public API view by emitting records for re-exported names and
+       aliased subpackages. Falls back to heuristics when explicit exports are
+       absent, optionally guided by __all__.
+
+    Returns (records, files_scanned, files_skipped).
+    """
     repo_root = Path(repo_path)
     results: List[Dict[str, Any]] = []
     files_scanned = 0
@@ -248,6 +299,17 @@ def extract_tools(repo_path: str) -> Tuple[List[Dict[str, Any]], int, int]:
 
     # Helper: build public export mapping for a package with fallbacks
     def _public_exports_for_package(pkg: str) -> Dict[str, str]:
+        """Return mapping export_name -> origin.full.dotted for a package.
+
+        Preference order:
+        - Explicit 'from X import name as alias' collected for the package
+        - If none, infer from available definitions within the package tree,
+          optionally restricting to names present in __all__
+        - As a last resort, consider the top-level package scope
+
+        Where multiple candidates exist, a simple score prefers modules whose
+        leaf name best matches the function name (e.g., '....<name>' > '...._<name>').
+        """
         mapping = dict(exports_by_package.get(pkg, {}))
         if mapping:
             return mapping
@@ -277,6 +339,11 @@ def extract_tools(repo_path: str) -> Tuple[List[Dict[str, Any]], int, int]:
 
     # Pass 2: emit public API tool records based on re-exports and aliases
     def _emit_public(public_module: str, export_name: str, origin: str) -> None:
+        """Emit a ToolRecord for a public API name if its origin is known.
+
+        Avoid duplicates by tracking seen ids. Carries over signature and
+        first-line doc from the origin definition.
+        """
         src = defs_by_full.get(origin)
         if not src:
             return

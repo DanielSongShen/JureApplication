@@ -28,16 +28,19 @@ Task extractor now has a notebook level import map.
 - This is necessary since units are often run in sequence and may have dependencies.
 - Clean python code (get rid of ipython stuff)
 
+Results:
+Is able to get the tools pretty consistently
+Tasks are too granular. 
+- Assumes each code block is a task.
+- We can use markdown formatting to decide where to split tasks.
+- We accumulate a list of tools used in each task
+
+V0.2
+- Add definition for loss function
+
 Executor
 Define reward function. What do we care about?
 - Chosen tools are correct
 - They are used in the correct way
 - Since we are evaluating tutorials, the answer should be pretty similar to the expected answer.
 - Output of the tool is also matching the tutorial
-
-- Agent with some file navigation tools to crawl through the repo
-    - Grep/regex
-    - cd, ls
-- Locate tutorials and read the readmes
-- Acculumlate a giant doc with all the learnings
-- Also find paths to relevant tools/functions

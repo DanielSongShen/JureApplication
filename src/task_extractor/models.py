@@ -21,6 +21,12 @@ class NotebookUnit(BaseModel):
 	referenced_tools: List[ToolRef] = Field(default_factory=list)
 
 
+class Notebook(BaseModel):
+	source_path: str
+	units: List[NotebookUnit] = Field(default_factory=list)
+	import_map: Dict[str, str] = Field(default_factory=dict)
+
+
 class MetricCriterion(BaseModel):
 	name: str
 	op: Literal[">=", "<=", "==", ">", "<"]
@@ -57,9 +63,3 @@ class TaskSpec(BaseModel):
 			referenced_tools=unit.referenced_tools,
 			evaluation_type="text",
 		)
-
-
-class Notebook(BaseModel):
-	source_path: str
-	units: List[NotebookUnit] = Field(default_factory=list)
-	import_map: Dict[str, str] = Field(default_factory=dict)
