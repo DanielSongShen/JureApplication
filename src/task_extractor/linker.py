@@ -8,10 +8,46 @@ from typing import Dict, List, Set, Tuple
 from .models import NotebookUnit, ToolRef
 
 
-def _build_import_map(code: str) -> Dict[str, str]:
+def _extract_python_code(code: str) -> str:
+	"""Return best-effort Python code by stripping IPython magics and shell lines.
+
+	Rules:
+	- Drop lines starting with '!'
+	- Drop cell-magic header lines starting with '%%' (keep following lines)
+	- For line magics like '%timeit expr', keep only the part after the first space
+	- Leave other lines unchanged
+	"""
+	output: List[str] = []
+	for line in code.splitlines():
+		strip_leading = line.lstrip()
+		if not strip_leading:
+			output.append(line)
+			continue
+		# Shell escape
+		if strip_leading.startswith("!"):
+			continue
+		# Cell magic header
+		if strip_leading.startswith("%%"):
+			# Skip magic line; subsequent lines are kept as-is
+			continue
+		# Line magic
+		if strip_leading.startswith("%"):
+			after = strip_leading[1:]
+			parts = after.split(" ", 1)
+			if len(parts) == 2 and parts[1].strip():
+				output.append(parts[1])
+				continue
+			# Pure magic without code payload; skip
+			continue
+		output.append(line)
+	return "\n".join(output)
+
+
+def extract_imports_from_code(code: str) -> Dict[str, str]:
 	alias_to_dotted: Dict[str, str] = {}
 	try:
-		tree = ast.parse(code)
+		clean = _extract_python_code(code)
+		tree = ast.parse(clean)
 	except Exception:
 		return alias_to_dotted
 	for node in ast.walk(tree):
@@ -46,7 +82,8 @@ def _attr_to_dotted(node: ast.AST) -> str | None:
 def _extract_call_dotted(code: str, import_map: Dict[str, str]) -> List[str]:
 	dotted_calls: List[str] = []
 	try:
-		tree = ast.parse(code)
+		clean = _extract_python_code(code)
+		tree = ast.parse(clean)
 	except Exception:
 		return dotted_calls
 	for node in ast.walk(tree):
@@ -99,8 +136,13 @@ def _load_tool_candidates(tools_json: Path) -> Tuple[Dict[str, str], Dict[str, S
 	return full_map, name_map
 
 
-def link_tools_for_unit(unit: NotebookUnit, tools_json: Path) -> List[ToolRef]:
-	import_map = _build_import_map(unit.code_text)
+def link_tools_for_unit(unit: NotebookUnit, tools_json: Path, cumulative_import_map: Dict[str, str] | None = None) -> List[ToolRef]:
+	local_imports = extract_imports_from_code(unit.code_text)
+	import_map: Dict[str, str] = {}
+	if cumulative_import_map:
+		import_map.update(cumulative_import_map)
+	import_map.update(local_imports)
+
 	calls = _extract_call_dotted(unit.code_text, import_map)
 	full_map, name_map = _load_tool_candidates(tools_json)
 

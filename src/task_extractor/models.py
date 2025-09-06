@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Optional, Tuple, List
+from typing import Literal, Optional, Tuple, List, Dict
 from pydantic import BaseModel, Field
 
 
@@ -41,7 +41,7 @@ class TaskSpec(BaseModel):
 	description: str
 	code_snippet: str
 	referenced_tools: List[ToolRef] = Field(default_factory=list)
-	evaluation_type: Literal["numeric", "text", "image", "boolean"]
+	evaluation_type: str
 	expected_outcome: Optional[str] = None
 	success_criteria: Optional[List[SuccessCriterion]] = None
 
@@ -57,3 +57,9 @@ class TaskSpec(BaseModel):
 			referenced_tools=unit.referenced_tools,
 			evaluation_type="text",
 		)
+
+
+class Notebook(BaseModel):
+	source_path: str
+	units: List[NotebookUnit] = Field(default_factory=list)
+	import_map: Dict[str, str] = Field(default_factory=dict)

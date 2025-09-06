@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import logging
 from typing import Optional
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.pydantic_v1 import BaseModel, Field
+from pydantic import BaseModel, Field
 
 from .config.settings import settings
 from .models import NotebookUnit, TaskSpec, ToolRef
+
+logger = logging.getLogger(__name__)
 
 
 class TaskSpecOut(BaseModel):
@@ -36,6 +39,12 @@ def _build_prompt() -> ChatPromptTemplate:
 def structure_task_from_unit(unit: NotebookUnit, snippet: str) -> TaskSpec:
 	# Build ID here and pass to model
 	task_id = f"{Path(unit.source_path).stem}_{unit.cell_index}"
+
+	logger.info(f"Structuring task from unit: {task_id}")
+	logger.debug(f"Input unit source: {unit.source_path}, cell: {unit.cell_index}")
+	logger.debug(f"Prose length: {len(unit.prose_text)} chars")
+	logger.debug(f"Code length: {len(unit.code_text)} chars")
+
 	prompt = _build_prompt()
 	llm = ChatOpenAI(
 		api_key=settings.LLM_API_KEY or None,
@@ -43,14 +52,24 @@ def structure_task_from_unit(unit: NotebookUnit, snippet: str) -> TaskSpec:
 		temperature=settings.LLM_TEMPERATURE,
 		base_url=settings.LLM_API_URL,
 	)
-	structured = llm.with_structured_output(TaskSpecOut)
-	result: TaskSpecOut = structured.invoke({
+
+	logger.info(f"Using LLM model: {settings.LLM_MODEL} at {settings.LLM_API_URL}")
+
+	chain = prompt | llm.with_structured_output(TaskSpecOut)
+
+	logger.debug("Invoking LLM chain with structured output")
+	result: TaskSpecOut = chain.invoke({
 		"prose": unit.prose_text,
 		"code": unit.code_text,
 		"nb_path": unit.source_path,
 	})
+
+	logger.info(f"LLM call completed for task: {task_id}")
+	logger.debug(f"Generated title: {result.title}")
+	logger.debug(f"Evaluation type: {result.evaluation_type}")
+
 	# Merge with known fields
-	return TaskSpec(
+	task_spec = TaskSpec(
 		id=result.id or task_id,
 		source_path=unit.source_path,
 		cell_index=unit.cell_index,
@@ -61,3 +80,6 @@ def structure_task_from_unit(unit: NotebookUnit, snippet: str) -> TaskSpec:
 		evaluation_type=result.evaluation_type,  # type: ignore[arg-type]
 		expected_outcome=result.expected_outcome,
 	)
+
+	logger.info(f"Task spec created: {task_spec.id}")
+	return task_spec

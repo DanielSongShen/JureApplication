@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 import typing as t
 
 import typer
 
 from .config.settings import settings
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
 
 app = typer.Typer(add_completion=True, help="Task extractor CLI")
 
@@ -41,7 +49,7 @@ def extract(
 	dry_run: bool = typer.Option(False, help="Run without LLM calls (structure minimal fields)"),
 ) -> None:
 	from .discovery import discover_notebooks
-	from .notebook import segment_notebook
+	from .notebook import parse_notebook
 	from .linker import link_tools_for_unit
 	from .snippet import assemble_minimal_snippet
 	from .io import TasksWriter, UnitsReportWriter
@@ -68,8 +76,12 @@ def extract(
 
 	processed = 0
 	for nb_path in notebooks:
-		for unit in segment_notebook(nb_path):
-			unit.referenced_tools = link_tools_for_unit(unit, tools_json)
+		parsed = parse_notebook(nb_path)
+		cumulative_map = dict(parsed.import_map)
+		for unit in parsed.units:
+			unit.referenced_tools = link_tools_for_unit(unit, tools_json, cumulative_import_map=cumulative_map)
+			# Update cumulative map with the unit's newly seen imports for subsequent units
+			cumulative_map.update({**cumulative_map, **{}})  # no-op placeholder; imports already applied in parse
 			snippet = assemble_minimal_snippet(unit)
 			if dry_run:
 				task = TaskSpec.from_unit(unit=unit, code_snippet=snippet)

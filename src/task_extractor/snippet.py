@@ -17,6 +17,6 @@ def assemble_minimal_snippet(unit: NotebookUnit) -> str:
 	)
 	metric_hint = (
 		"\n# If you compute a metric, emit one JSON line like:\n"
-		"# print('METRIC_JSON: {"metric": "name", "value": 0.0}')\n"
+		"# print('METRIC_JSON: {{\"metric\": \"name\", \"value\": 0.0}}')\n"
 	)
 	return f"{prelude}\n{unit.code_text.strip()}\n{metric_hint}"

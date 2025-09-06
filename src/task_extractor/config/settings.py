@@ -26,11 +26,11 @@ _load_env()
 @dataclass
 class Settings:
 	LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")
-	LLM_API_URL: str = os.getenv("LLM_API_URL", "https://api.openai.com/v1/chat/completions")
+	LLM_API_URL: str = os.getenv("LLM_API_URL", "https://api.openai.com/v1")
 	LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
-	LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
-	LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
-	LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "1200"))
+	LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-5-mini")
+	LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "1"))
+	LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "3000"))
 	LLM_TIMEOUT_S: int = int(os.getenv("LLM_TIMEOUT_S", "60"))
 
 	DEFAULT_SOURCE_DIRS: List[str] = field(default_factory=lambda: [

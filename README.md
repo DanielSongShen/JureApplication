@@ -13,12 +13,21 @@ What makes up a repo?
 - Lots of infrastructure code. Some exposed functions/tools that are meant to be used. 
 
 V0
-Build high-level understanding by reading readmes and crawling through the repo. Write all findings to a document for future reference.
 Use AST to parse exposed tools (functions, classes, apis)
 - Assumes code is simple (Doesn't consider re-exports, decorator effects, and dynamic constructs)
 Locate tutorials and parse a list of tasks using llm and regex and ast
 - Assume tutorials are all in jupyter notebooks.
 - Assumes markdown before code block is the only necessary context
+- Also when we extract from the jupyter notebook, we assume each block has its own imports.
+
+V0.1
+Tool extractor now has an llm that crawls through readmes and adds to the tools.json
+- This is useful for submodules and aliases that aren't caputred by the ast like sc.pp.*
+- Account for re-exports
+Task extractor now has a notebook level import map.
+- This is necessary since units are often run in sequence and may have dependencies.
+- Clean python code (get rid of ipython stuff)
+
 Executor
 Define reward function. What do we care about?
 - Chosen tools are correct

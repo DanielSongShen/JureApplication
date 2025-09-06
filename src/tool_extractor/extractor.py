@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from collections import defaultdict
 from pathlib import Path
 from typing import List, Optional, Set, Tuple, Dict, Any
 
@@ -144,12 +145,38 @@ def _render_signature(fn: ast.AST, source: str) -> str:
     return f"{kind} {fn.name}({params_rendered})"
 
 
+def _normalize_module_name(mod: str) -> str:
+    """Normalize module names for src-layout and future rules.
+
+    Current rules:
+    - Strip leading 'src.' if present.
+    """
+    if mod.startswith("src."):
+        mod = mod[len("src.") :]
+    return mod
+
+
 def _module_name_for(file_path: Path, repo_root: Path) -> str:
     rel = file_path.relative_to(repo_root).as_posix()
     mod = rel[:-3].replace("/", ".")  # strip .py
     if mod.endswith(".__init__"):
         mod = mod[: -len(".__init__")]
-    return mod
+    return _normalize_module_name(mod)
+
+
+def _resolve_relative_module(current_module: str, module: Optional[str], level: int) -> str:
+    # Resolve relative import target to absolute dotted path
+    if level <= 0:
+        return module or current_module
+    parts = current_module.split(".")
+    # If importing from a package __init__, current_module is the package path
+    base = parts[: len(parts) - level + 1] if level > 0 else parts
+    prefix = ".".join([p for p in base if p])
+    if module:
+        if prefix:
+            return f"{prefix}.{module}"
+        return module
+    return prefix
 
 
 def extract_tools(repo_path: str) -> Tuple[List[Dict[str, Any]], int, int]:
@@ -158,6 +185,14 @@ def extract_tools(repo_path: str) -> Tuple[List[Dict[str, Any]], int, int]:
     files_scanned = 0
     files_skipped = 0
 
+    # Pass 1: collect function defs and package re-exports/aliases
+    defs_by_full: Dict[str, ToolRecord] = {}
+    exports_by_package: Dict[str, Dict[str, str]] = defaultdict(dict)  # pkg -> name -> origin full dotted
+    aliases_by_package: Dict[str, Dict[str, str]] = defaultdict(dict)  # pkg -> alias -> subpkg
+    all_by_package: Dict[str, Set[str]] = defaultdict(set)  # pkg -> names declared in __all__
+
+    seen_ids: Set[str] = set()
+
     for file in discover_python_files(repo_root):
         files_scanned += 1
         source, module = _read_and_parse(file)
@@ -165,11 +200,13 @@ def extract_tools(repo_path: str) -> Tuple[List[Dict[str, Any]], int, int]:
             files_skipped += 1
             continue
 
+        module_name = _module_name_for(file, repo_root)
         literal_all = _extract_literal_all(module)
+
+        # Collect top-level functions (definitions)
         for fn in _extract_top_level_functions(module):
             if not _is_public(fn.name, literal_all):
                 continue
-            module_name = _module_name_for(file, repo_root)
             signature = _render_signature(fn, source)
             doc_first_raw = (ast.get_docstring(fn, clean=True) or "").strip().splitlines()
             doc_first_line = doc_first_raw[0] if doc_first_raw else ""
@@ -183,6 +220,95 @@ def extract_tools(repo_path: str) -> Tuple[List[Dict[str, Any]], int, int]:
                 lineno=fn.lineno,
             )
             results.append(record.to_dict())
+            seen_ids.add(record.id)
+            defs_by_full[f"{module_name}.{fn.name}"] = record
+
+        # If this is a package __init__, collect __all__, re-exports and aliases
+        if file.name == "__init__.py":
+            if literal_all:
+                all_by_package[module_name] |= literal_all
+            for node in module.body:
+                if isinstance(node, ast.ImportFrom):
+                    abs_mod = _resolve_relative_module(module_name, node.module, node.level or 0)
+                    if node.module is None and (node.level or 0) > 0:
+                        # from . import subpkg as alias
+                        for n in node.names:
+                            alias = n.asname or n.name
+                            aliases_by_package[module_name][alias] = n.name
+                    else:
+                        # from X import a as b, including star
+                        for n in node.names:
+                            if n.name == "*":
+                                # Defer star handling (optional future work)
+                                continue
+                            exported_name = n.asname or n.name
+                            origin = f"{abs_mod}.{n.name}"
+                            exports_by_package[module_name][exported_name] = origin
+                # Direct 'import' rarely used for local re-exports; ignore for now
+
+    # Helper: build public export mapping for a package with fallbacks
+    def _public_exports_for_package(pkg: str) -> Dict[str, str]:
+        mapping = dict(exports_by_package.get(pkg, {}))
+        if mapping:
+            return mapping
+        preferred_names = all_by_package.get(pkg, set())
+        candidates = [full for full in defs_by_full.keys() if full.startswith(f"{pkg}.")]
+        if not candidates:
+            # fallback to top-level package scope
+            top = pkg.split(".")[0]
+            candidates = [full for full in defs_by_full.keys() if full.startswith(f"{top}.")]
+        name_to_best: Dict[str, str] = {}
+        def score(full: str, name: str) -> int:
+            mod = full.rsplit(".", 1)[0]
+            leaf = mod.split(".")[-1]
+            if leaf == name:
+                return 3
+            if leaf == f"_{name}":
+                return 2
+            return 1
+        for full in candidates:
+            name = full.split(".")[-1]
+            if preferred_names and name not in preferred_names:
+                continue
+            prev = name_to_best.get(name)
+            if prev is None or score(full, name) > score(prev, name):
+                name_to_best[name] = full
+        return name_to_best
+
+    # Pass 2: emit public API tool records based on re-exports and aliases
+    def _emit_public(public_module: str, export_name: str, origin: str) -> None:
+        src = defs_by_full.get(origin)
+        if not src:
+            return
+        rec_id = f"{public_module}:{export_name}"
+        if rec_id in seen_ids:
+            return
+        results.append(ToolRecord(
+            id=rec_id,
+            module=public_module,
+            name=export_name,
+            signature=src.signature,
+            doc_first_line=src.doc_first_line,
+            file=src.file,
+            lineno=src.lineno,
+        ).to_dict())
+        seen_ids.add(rec_id)
+
+    # Direct exports (explicit or inferred via __all__/fallback)
+    direct_pkgs = set(exports_by_package.keys()) | set(all_by_package.keys())
+    for pkg in direct_pkgs:
+        mapping = _public_exports_for_package(pkg)
+        for export_name, origin in mapping.items():
+            _emit_public(pkg, export_name, origin)
+
+    # Aliased subpackages on parent package (e.g., scanpy: pp -> preprocessing)
+    for parent_pkg, alias_map in aliases_by_package.items():
+        for alias, subpkg in alias_map.items():
+            child_pkg = f"{parent_pkg}.{subpkg}"
+            child_exports = _public_exports_for_package(child_pkg)
+            for export_name, origin in child_exports.items():
+                public_module = f"{parent_pkg}.{alias}"
+                _emit_public(public_module, export_name, origin)
 
     return results, files_scanned, files_skipped
 
