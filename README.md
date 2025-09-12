@@ -29,18 +29,39 @@ Task extractor now has a notebook level import map.
 - Clean python code (get rid of ipython stuff)
 
 Results:
-Is able to get the tools pretty consistently
+Is able to get the tools pretty consistently.
 Tasks are too granular. 
 - Assumes each code block is a task.
 - We can use markdown formatting to decide where to split tasks.
-- We accumulate a list of tools used in each task
+- We accumulate a list of tools used in each task.
 
 V0.2
-- Add definition for loss function
+- Easier thing to test
+    - Given a small list of tools and a description of a task, can the llm write code to match the tutorial?
+- Tool extractor
+    - Combine like tools with a unified description.
+- Tool selector
+    - LLM to search the tool database using vector embeddings for possible tools.
+- Task generator
+    - Split tutorial files based on markdown formatting into reference tasks.
+    - A task includes a task id, a concise text description, a list of referrenced tools, and an example of code that fullfills the task.
+    - We can ask an llm to generate novel tasks based on reference tasks.
+- Evaluation and loss
+    - Deterministic
+        - A1 Syntax/run-time errors
+            - Binary 0, 1
+        - A2 Compare tutorial's expected result
+            - Numeric: scale by tolerance
+            - Text: fuzzy string match
+        - A3 Tool call trace
+            - Jaccard similarity between predicted vs. reference tool sets (0–1)
+    - LLM as a judge
+        - B1 Approach soundness: “Given the tutorial intent, is the strategy appropriate?” (yes/no)
+        - B2 Tool appropriateness: “Are these tools reasonable alternatives for this task?” (yes/no)
+        - B3 Result plausibility: “Does the observed output plausibly satisfy the described goal?” (yes/no)
+        - B Reward is just weighted mean of these three scores.
+    - Efficiency
+        - C1 Step cost penalty: Normalize by reference steps: penalty = min(1, steps / steps_ref), then subtract α·penalty.
+    - Reward is just weighted sum of these three components, gated by A1
+        - reward = A1 * (wa2 * A2 + wa3 * A3 + wB * B + wC1 * C1)
 
-Executor
-Define reward function. What do we care about?
-- Chosen tools are correct
-- They are used in the correct way
-- Since we are evaluating tutorials, the answer should be pretty similar to the expected answer.
-- Output of the tool is also matching the tutorial
